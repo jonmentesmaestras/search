@@ -1,0 +1,56 @@
+const express = require('express');
+const axios = require('axios'); // To make the internal HTTP request
+const {Translate} = require('@google-cloud/translate').v2;
+const translateRouter = require('./routes/translate'); // Import the new router
+
+const app = express();
+const translate = new Translate({
+ key: process.env.GOOGLE_TRANSLATE_API_KEY // <-- Use environment variable for API key
+});
+
+// Use the new router for the /translate-pt endpoint
+app.use(translateRouter);
+
+// This is your new public-facing endpoint
+app.get('/search', async (req, res) => {
+    try {
+        // 1. Get the original Spanish keywords from the user's request
+        const spanishKeywords = req.query.keywords;
+
+        if (!spanishKeywords) {
+            return res.status(400).json({ error: 'Keywords parameter is required.' });
+        }
+
+        // 2. Translate the keywords to Portuguese ('pt')
+        let [translations] = await translate.translate(spanishKeywords, 'pt');
+        const portugueseKeywords = Array.isArray(translations) ? translations[0] : translations;
+
+        console.log(`Translated "${spanishKeywords}" to "${portugueseKeywords}"`);
+
+        // 3. Keep all other query parameters the user might have sent
+        const otherParams = { ...req.query };
+        delete otherParams.keywords; // remove the original keywords param
+
+        // 4. Call the internal /getads endpoint with the *translated* keywords
+        const internalApiUrl = 'https://tueducaciondigital.site/ads/getads/';
+
+        const apiResponse = await axios.get(internalApiUrl, {
+            params: {
+                ...otherParams,
+                keywords: portugueseKeywords // Use the new translated keywords
+            }
+        });
+
+        // 5. Send the response from /getads back to the user
+        res.status(apiResponse.status).json(apiResponse.data);
+
+    } catch (error) {
+        console.error('Error in /search endpoint:', error);
+        res.status(500).json({ error: 'An internal server error occurred.' });
+    }
+});
+
+const PORT = process.env.PORT || 3003;
+app.listen(PORT, () => {
+    console.log(`Search proxy server running on port ${PORT}`);
+});
